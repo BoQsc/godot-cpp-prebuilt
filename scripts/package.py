@@ -12,19 +12,8 @@ import time
 import zipfile
 
 
-EXCLUDE_DIRS = {
-    ".git",
-    ".github",
-    ".scons_cache",
-    "__pycache__",
-    "test",
-}
-EXCLUDE_SUFFIXES = {
-    ".o",
-    ".obj",
-    ".os",
-    ".pyc",
-}
+EXCLUDE_DIRS = {".git", ".github", ".scons_cache", "__pycache__", "test"}
+EXCLUDE_SUFFIXES = {".o", ".obj", ".os", ".pyc"}
 
 
 def ignore_path(path: Path) -> bool:
@@ -32,9 +21,7 @@ def ignore_path(path: Path) -> bool:
         return True
     if path.name in {".sconsign.dblite", "compile_commands.json"}:
         return True
-    if path.suffix.lower() in EXCLUDE_SUFFIXES:
-        return True
-    return False
+    return path.suffix.lower() in EXCLUDE_SUFFIXES
 
 
 def copy_tree(source: Path, destination: Path) -> None:
@@ -42,7 +29,6 @@ def copy_tree(source: Path, destination: Path) -> None:
         relative = path.relative_to(source)
         if ignore_path(relative):
             continue
-
         target = destination / relative
         if path.is_dir():
             target.mkdir(parents=True, exist_ok=True)
@@ -54,10 +40,7 @@ def copy_tree(source: Path, destination: Path) -> None:
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
-        while True:
-            chunk = f.read(1024 * 1024)
-            if not chunk:
-                break
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -83,7 +66,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="godot-cpp-package-") as td:
         package_root = Path(td) / "godot-cpp"
         package_root.mkdir(parents=True)
-
         copy_tree(source, package_root)
 
         info = {
@@ -98,31 +80,32 @@ def main() -> int:
             "precision": args.precision,
             "created_unix": int(time.time()),
         }
-        (package_root / "BUILD_INFO.json").write_text(
-            json.dumps(info, indent=2) + "\n",
-            encoding="utf-8",
-        )
-
+        (package_root / "BUILD_INFO.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
         (package_root / "PREBUILT.md").write_text(
-            """# Prebuilt package
+            f"""# Prebuilt package
 
 This directory contains precompiled godot-cpp libraries.
 
-Use the normal upstream SConstruct, but disable rebuilding the static library:
+Package ABI:
 
-    scons build_library=no api_version=YOUR_API_VERSION
+- Godot API: `{args.api_version}`
+- precision: `{args.precision}`
+- platform: `{args.platform}`
+- architecture: `{args.arch}`
+- compiler: `{args.compiler}`
 
-The generated bindings and prebuilt libraries are already present.
+Use the normal upstream SConstruct, but disable rebuilding the static library and preserve
+the package precision:
+
+    scons build_library=no api_version={args.api_version} precision={args.precision}
+
+`BUILD_INFO.json` is the machine-readable source of truth for these values. Do not mix a
+single-precision package with a double-precision Godot build, or vice versa.
 """,
             encoding="utf-8",
         )
 
-        with zipfile.ZipFile(
-            output,
-            "w",
-            compression=zipfile.ZIP_DEFLATED,
-            compresslevel=9,
-        ) as archive:
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
             for path in sorted(package_root.rglob("*")):
                 if path.is_file():
                     archive.write(path, path.relative_to(package_root.parent))
