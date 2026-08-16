@@ -1,15 +1,16 @@
 name: Validate existing prebuilt run
 
 on:
-  push:
-    branches:
-      - fix/prebuilt-release
   workflow_dispatch:
     inputs:
       source_run_id:
         description: Build workflow run whose artifacts should be validated
         required: true
-        default: "31957335314"
+        type: string
+      api_version:
+        description: Godot API version used by that run
+        required: true
+        default: "4.7"
         type: string
 
 permissions:
@@ -17,12 +18,12 @@ permissions:
   contents: read
 
 env:
-  SOURCE_RUN_ID: ${{ inputs.source_run_id || '31957335314' }}
-  API_VERSION: "4.7"
+  SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+  API_VERSION: ${{ inputs.api_version }}
 
 jobs:
   smoke:
-    name: Reuse run ${{ inputs.source_run_id || '31957335314' }} · Linux ${{ matrix.precision }}
+    name: Reuse run ${{ inputs.source_run_id }} · Linux ${{ matrix.precision }}
     runs-on: ubuntu-22.04
     timeout-minutes: 15
 
@@ -127,8 +128,8 @@ jobs:
       - name: Initialize project cache
         shell: bash
         run: |
-          # Godot 4.7 can abort after completing a headless editor/import pass on CI.
-          # Upstream godot-cpp CI explicitly tolerates this initialization crash.
+          # Godot may abort after completing a headless import/editor pass in CI.
+          # Upstream godot-cpp CI deliberately tolerates this initialization crash.
           set +e
           timeout 30 "$SMOKE_GODOT" --headless --path smoke-test/project --import
           status=$?
