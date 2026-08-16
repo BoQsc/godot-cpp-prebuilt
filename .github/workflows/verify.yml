@@ -1,0 +1,28 @@
+name: Verify repository
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Check configuration
+        run: python scripts/check_config.py
+
+      - name: Syntax-check Python
+        run: |
+          python -m py_compile \
+            scripts/package.py \
+            scripts/make_manifest.py \
+            scripts/install.py \
+            scripts/check_config.py \
+            local_build.py

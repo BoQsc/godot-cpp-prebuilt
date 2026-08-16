@@ -1,0 +1,87 @@
+{
+  "default_api_version": "4.7",
+  "godot_cpp": {
+    "ref": "d7b6162249ed52796a8301d216c24ee71d68c2bf",
+    "note": "Pinned 10.x commit with Godot API 4.7 support."
+  },
+  "zig": {
+    "version": "0.16.0-dev.1484+d0ba6642b",
+    "windows_x86_64_url": "https://ziglang.org/builds/zig-x86_64-windows-0.16.0-dev.1484+d0ba6642b.zip"
+  },
+  "variants": [
+    {
+      "id": "linux-x86_64-gcc",
+      "os": "ubuntu-22.04",
+      "platform": "linux",
+      "arch": "x86_64",
+      "compiler": "gcc",
+      "flags": []
+    },
+    {
+      "id": "windows-x86_64-msvc",
+      "os": "windows-2022",
+      "platform": "windows",
+      "arch": "x86_64",
+      "compiler": "msvc",
+      "flags": []
+    },
+    {
+      "id": "windows-x86_64-mingw",
+      "os": "windows-2022",
+      "platform": "windows",
+      "arch": "x86_64",
+      "compiler": "mingw",
+      "flags": [
+        "use_mingw=yes"
+      ]
+    },
+    {
+      "id": "windows-x86_64-zig",
+      "os": "windows-2022",
+      "platform": "windows",
+      "arch": "x86_64",
+      "compiler": "zig",
+      "flags": []
+    },
+    {
+      "id": "macos-universal-clang",
+      "os": "macos-latest",
+      "platform": "macos",
+      "arch": "universal",
+      "compiler": "clang",
+      "flags": [
+        "arch=universal"
+      ]
+    },
+    {
+      "id": "android-arm64",
+      "os": "ubuntu-22.04",
+      "platform": "android",
+      "arch": "arm64",
+      "compiler": "android-ndk",
+      "flags": [
+        "arch=arm64"
+      ]
+    },
+    {
+      "id": "ios-arm64",
+      "os": "macos-latest",
+      "platform": "ios",
+      "arch": "arm64",
+      "compiler": "apple-clang",
+      "flags": [
+        "arch=arm64"
+      ]
+    },
+    {
+      "id": "web-wasm32",
+      "os": "ubuntu-22.04",
+      "platform": "web",
+      "arch": "wasm32",
+      "compiler": "emscripten",
+      "flags": [
+        "arch=wasm32"
+      ]
+    }
+  ]
+}

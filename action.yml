@@ -1,0 +1,53 @@
+name: Setup prebuilt godot-cpp
+description: Download a prebuilt godot-cpp package from this repository's releases.
+
+inputs:
+  api-version:
+    description: Godot API version to target.
+    required: false
+    default: "4.7"
+  variant:
+    description: Build variant, or auto for the normal host toolchain.
+    required: false
+    default: auto
+  precision:
+    description: Godot floating-point precision, single or double.
+    required: false
+    default: single
+  path:
+    description: Destination directory.
+    required: false
+    default: godot-cpp
+  release:
+    description: Optional exact release tag. Empty selects the newest release for the API.
+    required: false
+    default: ""
+
+outputs:
+  godot-cpp-path:
+    description: Destination path containing the extracted godot-cpp package.
+    value: ${{ steps.install.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install prebuilt godot-cpp
+      id: install
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        args=(
+          --repo "$GITHUB_ACTION_REPOSITORY"
+          --api-version "${{ inputs.api-version }}"
+          --variant "${{ inputs.variant }}"
+          --precision "${{ inputs.precision }}"
+          --path "${{ inputs.path }}"
+        )
+
+        if [ -n "${{ inputs.release }}" ]; then
+          args+=(--release "${{ inputs.release }}")
+        fi
+
+        python "$GITHUB_ACTION_PATH/scripts/install.py" "${args[@]}"
+        echo "path=${{ inputs.path }}" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,29 @@
+name: Build problem
+description: Report a missing or broken prebuilt package.
+title: "[build] "
+labels:
+  - build
+body:
+  - type: input
+    id: release
+    attributes:
+      label: Release
+      placeholder: api-4.7-abcdef0
+    validations:
+      required: true
+
+  - type: input
+    id: variant
+    attributes:
+      label: Variant
+      placeholder: windows-x86_64-msvc
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Include the build/link error and the GDExtension toolchain you use.
+    validations:
+      required: true

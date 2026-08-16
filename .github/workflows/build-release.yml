@@ -1,0 +1,371 @@
+name: Build and release godot-cpp
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_version:
+        description: Godot API version
+        required: true
+        default: "4.7"
+        type: string
+      godot_cpp_ref:
+        description: Upstream godot-cpp branch, tag, or commit
+        required: true
+        default: "d7b6162249ed52796a8301d216c24ee71d68c2bf"
+        type: string
+      publish_release:
+        description: Publish GitHub Release
+        required: true
+        default: true
+        type: boolean
+      release_tag:
+        description: Optional exact release tag
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+
+    outputs:
+      sha: ${{ steps.upstream.outputs.sha }}
+      short_sha: ${{ steps.upstream.outputs.short_sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout upstream godot-cpp
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ inputs.godot_cpp_ref }}
+          path: godot-cpp
+
+      - name: Resolve upstream revision
+        id: upstream
+        shell: bash
+        run: |
+          sha="$(git -C godot-cpp rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${sha:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify requested API exists
+        shell: bash
+        run: |
+          api="${{ inputs.api_version }}"
+          api="${api/./-}"
+          file="godot-cpp/gdextension/extension_api-${api}.json"
+
+          if [ ! -f "$file" ]; then
+            echo "Requested Godot API file was not found: $file"
+            exit 1
+          fi
+
+  build:
+    needs: resolve
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x86_64-gcc
+            os: ubuntu-22.04
+            platform: linux
+            arch: x86_64
+            compiler: gcc
+            windows_compiler: msvc
+            precision: single
+            flags: ""
+
+          - id: linux-x86_64-gcc
+            os: ubuntu-22.04
+            platform: linux
+            arch: x86_64
+            compiler: gcc
+            windows_compiler: msvc
+            precision: double
+            flags: ""
+
+          - id: windows-x86_64-msvc
+            os: windows-2022
+            platform: windows
+            arch: x86_64
+            compiler: msvc
+            windows_compiler: msvc
+            precision: single
+            flags: ""
+
+          - id: windows-x86_64-msvc
+            os: windows-2022
+            platform: windows
+            arch: x86_64
+            compiler: msvc
+            windows_compiler: msvc
+            precision: double
+            flags: ""
+
+          - id: windows-x86_64-mingw
+            os: windows-2022
+            platform: windows
+            arch: x86_64
+            compiler: mingw
+            windows_compiler: mingw
+            precision: single
+            flags: "use_mingw=yes"
+
+          - id: windows-x86_64-mingw
+            os: windows-2022
+            platform: windows
+            arch: x86_64
+            compiler: mingw
+            windows_compiler: mingw
+            precision: double
+            flags: "use_mingw=yes"
+
+          - id: windows-x86_64-zig
+            os: windows-2022
+            platform: windows
+            arch: x86_64
+            compiler: zig
+            windows_compiler: msvc
+            precision: single
+            flags: ""
+
+          - id: windows-x86_64-zig
+            os: windows-2022
+            platform: windows
+            arch: x86_64
+            compiler: zig
+            windows_compiler: msvc
+            precision: double
+            flags: ""
+
+          - id: macos-universal-clang
+            os: macos-latest
+            platform: macos
+            arch: universal
+            compiler: clang
+            windows_compiler: msvc
+            precision: single
+            flags: "arch=universal"
+
+          - id: macos-universal-clang
+            os: macos-latest
+            platform: macos
+            arch: universal
+            compiler: clang
+            windows_compiler: msvc
+            precision: double
+            flags: "arch=universal"
+
+          - id: android-arm64
+            os: ubuntu-22.04
+            platform: android
+            arch: arm64
+            compiler: android-ndk
+            windows_compiler: msvc
+            precision: single
+            flags: "arch=arm64"
+
+          - id: android-arm64
+            os: ubuntu-22.04
+            platform: android
+            arch: arm64
+            compiler: android-ndk
+            windows_compiler: msvc
+            precision: double
+            flags: "arch=arm64"
+
+          - id: ios-arm64
+            os: macos-latest
+            platform: ios
+            arch: arm64
+            compiler: apple-clang
+            windows_compiler: msvc
+            precision: single
+            flags: "arch=arm64"
+
+          - id: ios-arm64
+            os: macos-latest
+            platform: ios
+            arch: arm64
+            compiler: apple-clang
+            windows_compiler: msvc
+            precision: double
+            flags: "arch=arm64"
+
+          - id: web-wasm32
+            os: ubuntu-22.04
+            platform: web
+            arch: wasm32
+            compiler: emscripten
+            windows_compiler: msvc
+            precision: single
+            flags: "arch=wasm32"
+
+          - id: web-wasm32
+            os: ubuntu-22.04
+            platform: web
+            arch: wasm32
+            compiler: emscripten
+            windows_compiler: msvc
+            precision: double
+            flags: "arch=wasm32"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned upstream godot-cpp
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: godot-cpp
+
+      - name: Setup godot-cpp dependencies
+        uses: ./godot-cpp/.github/actions/setup-godot-cpp
+        with:
+          platform: ${{ matrix.platform }}
+          windows-compiler: ${{ matrix.windows_compiler }}
+          em-version: "4.0.11"
+          scons-version: "4.4.0"
+
+      - name: Setup pinned Zig
+        if: ${{ matrix.compiler == 'zig' }}
+        shell: pwsh
+        run: |
+          $url = "https://ziglang.org/builds/zig-x86_64-windows-0.16.0-dev.1484+d0ba6642b.zip"
+          Invoke-WebRequest -Uri $url -OutFile zig.zip
+          Expand-Archive zig.zip -DestinationPath tools
+          $zigDir = Get-ChildItem tools -Directory | Select-Object -First 1
+          "GODOT_CPP_ZIG=$($zigDir.FullName)\zig.exe" >> $env:GITHUB_ENV
+
+      - name: Restore SCons cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .scons_cache
+            zig_cache
+          key: godot-cpp-${{ matrix.id }}-${{ matrix.precision }}-${{ needs.resolve.outputs.sha }}-api${{ inputs.api_version }}
+
+      - name: Build standard toolchain variant
+        if: ${{ matrix.compiler != 'zig' }}
+        shell: bash
+        env:
+          SCONS_CACHE: ${{ github.workspace }}/.scons_cache
+        run: |
+          set -e
+          cd godot-cpp
+
+          for target in template_debug template_release; do
+            scons \
+              api_version="${{ inputs.api_version }}" \
+              platform="${{ matrix.platform }}" \
+              arch="${{ matrix.arch }}" \
+              target="$target" \
+              precision="${{ matrix.precision }}" \
+              ${{ matrix.flags }}
+          done
+
+      - name: Build Zig variant
+        if: ${{ matrix.compiler == 'zig' }}
+        shell: pwsh
+        env:
+          SCONS_CACHE: ${{ github.workspace }}/.scons_cache
+        run: |
+          $targets = @("template_debug", "template_release")
+
+          foreach ($target in $targets) {
+            python -m SCons `
+              -f ci/SConstruct.zig `
+              "api_version=${{ inputs.api_version }}" `
+              "platform=windows" `
+              "arch=x86_64" `
+              "target=$target" `
+              "precision=${{ matrix.precision }}" `
+              -j2
+
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Package prebuilt SDK
+        shell: bash
+        run: |
+          mkdir -p dist
+
+          python scripts/package.py \
+            --source godot-cpp \
+            --output "dist/godot-cpp-api-${{ inputs.api_version }}-${{ matrix.id }}-${{ matrix.precision }}.zip" \
+            --api-version "${{ inputs.api_version }}" \
+            --godot-cpp-sha "${{ needs.resolve.outputs.sha }}" \
+            --variant "${{ matrix.id }}" \
+            --compiler "${{ matrix.compiler }}" \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --precision "${{ matrix.precision }}" \
+            --zig-version "0.16.0-dev.1484+d0ba6642b"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-cpp-api-${{ inputs.api_version }}-${{ matrix.id }}-${{ matrix.precision }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    if: ${{ inputs.publish_release }}
+
+    needs:
+      - resolve
+      - build
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Make manifest
+        run: |
+          python scripts/make_manifest.py dist \
+            --api-version "${{ inputs.api_version }}" \
+            --godot-cpp-sha "${{ needs.resolve.outputs.sha }}" \
+            --output dist/manifest.json
+
+      - name: Choose release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.release_tag }}" ]; then
+            tag="${{ inputs.release_tag }}"
+          else
+            tag="api-${{ inputs.api_version }}-${{ needs.resolve.outputs.short_sha }}"
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        shell: bash
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "godot-cpp API ${{ inputs.api_version }} · ${{ needs.resolve.outputs.short_sha }}" \
+              --notes "Prebuilt godot-cpp packages. Upstream revision: ${{ needs.resolve.outputs.sha }}."
+          fi
+
+          gh release upload "$TAG" dist/*.zip dist/manifest.json --clobber

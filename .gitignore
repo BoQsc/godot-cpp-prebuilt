@@ -1,0 +1,11 @@
+build/
+dist/
+downloads/
+tools/
+godot-cpp/
+zig_cache/
+.scons_cache/
+.sconsign.dblite
+__pycache__/
+*.pyc
+*.zip
