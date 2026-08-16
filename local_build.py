@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Explicit Windows/Zig recovery build.
+"""Explicit Windows/MSVC recovery build.
 
 Normal use should be GitHub Actions + release downloads.
 A double-precision recovery build requires a genuine API dump from a
@@ -25,9 +25,6 @@ ROOT = Path(__file__).resolve().parent
 CONFIG = json.loads((ROOT / "builds.json").read_text(encoding="utf-8"))
 API = CONFIG["default_api_version"]
 REF = CONFIG["godot_cpp"]["ref"]
-ZIG_URL = CONFIG["zig"]["windows_x86_64_url"]
-ZIG_VERSION = CONFIG["zig"]["version"]
-ZIG_SHA256 = CONFIG["zig"]["windows_x86_64_sha256"]
 
 
 def download(url: str, output: Path) -> None:
@@ -35,15 +32,6 @@ def download(url: str, output: Path) -> None:
     request = urllib.request.Request(url, headers={"User-Agent": "godot-cpp-prebuilt-local-build"})
     with urllib.request.urlopen(request) as response, output.open("wb") as f:
         shutil.copyfileobj(response, f)
-
-
-def sha256(path: Path) -> str:
-    import hashlib
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def ensure_scons() -> None:
@@ -56,6 +44,7 @@ def ensure_upstream() -> Path:
     target = ROOT / "godot-cpp"
     if (target / "SConstruct").is_file():
         return target
+
     url = f"https://github.com/godotengine/godot-cpp/archive/{REF}.zip"
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
@@ -71,37 +60,6 @@ def ensure_upstream() -> Path:
     return target
 
 
-def ensure_zig() -> Path:
-    target = ROOT / "tools" / "zig"
-    exe = target / "zig.exe"
-    if exe.is_file():
-        reported = subprocess.check_output([str(exe), "version"], text=True).strip()
-        if reported == ZIG_VERSION:
-            return exe
-        shutil.rmtree(target)
-
-    with tempfile.TemporaryDirectory() as td:
-        td = Path(td)
-        archive = td / "zig.zip"
-        extract = td / "extract"
-        download(ZIG_URL, archive)
-        actual = sha256(archive)
-        if actual != ZIG_SHA256:
-            raise RuntimeError(f"Zig SHA256 mismatch: {actual}")
-        with zipfile.ZipFile(archive) as z:
-            z.extractall(extract)
-        source = next(p for p in extract.iterdir() if p.is_dir())
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.move(str(source), str(target))
-
-    reported = subprocess.check_output([str(exe), "version"], text=True).strip()
-    if reported != ZIG_VERSION:
-        raise RuntimeError(f"Expected Zig {ZIG_VERSION}, got {reported}")
-    return exe
-
-
 def bundled_api_path(upstream: Path) -> Path:
     return upstream / "gdextension" / f"extension_api-{API.replace('.', '-')}.json"
 
@@ -113,46 +71,54 @@ def validate_api(path: Path, precision: str) -> None:
         raise RuntimeError(f"{path} has precision={actual!r}; expected {precision!r}")
 
 
-def run_build(zig: Path, target: str, precision: str) -> None:
-    env = dict(os.environ)
-    env["GODOT_CPP_ZIG"] = str(zig)
+def run_build(target: str, precision: str) -> None:
     cmd = [
-        sys.executable, "-m", "SCons", "-f", "ci/SConstruct.zig",
-        f"api_version={API}", "platform=windows", "arch=x86_64",
-        f"target={target}", f"precision={precision}", "-j4",
+        sys.executable,
+        "-m",
+        "SCons",
+        f"api_version={API}",
+        "platform=windows",
+        "arch=x86_64",
+        f"target={target}",
+        f"precision={precision}",
+        "-j4",
     ]
     print(" ".join(cmd))
-    subprocess.check_call(cmd, cwd=ROOT, env=env)
+    subprocess.check_call(cmd, cwd=ROOT / "godot-cpp")
 
 
 def package_precision(precision: str) -> None:
-    output = ROOT / f"godot-cpp-api-{API}-windows-x86_64-zig-{precision}.zip"
+    output = ROOT / f"godot-cpp-api-{API}-windows-x86_64-msvc-{precision}.zip"
     subprocess.check_call([
-        sys.executable, "scripts/package.py",
-        "--source", "godot-cpp", "--output", str(output),
-        "--api-version", API, "--godot-cpp-sha", REF,
-        "--variant", "windows-x86_64-zig", "--compiler", "zig",
-        "--platform", "windows", "--arch", "x86_64",
-        "--precision", precision, "--zig-version", ZIG_VERSION,
+        sys.executable,
+        "scripts/package.py",
+        "--source", "godot-cpp",
+        "--output", str(output),
+        "--api-version", API,
+        "--godot-cpp-sha", REF,
+        "--variant", "windows-x86_64-msvc",
+        "--compiler", "msvc",
+        "--platform", "windows",
+        "--arch", "x86_64",
+        "--precision", precision,
     ], cwd=ROOT)
     print("Created:", output)
 
 
 def main() -> int:
     if sys.platform != "win32":
-        print("ERROR: this recovery helper is intentionally Windows/Zig only.")
+        print("ERROR: this recovery helper is intentionally Windows/MSVC only.")
         return 2
 
     ensure_scons()
     upstream = ensure_upstream()
-    zig = ensure_zig()
     api_path = bundled_api_path(upstream)
     original_api = api_path.read_bytes()
 
     try:
         validate_api(api_path, "single")
         for target in ("template_debug", "template_release"):
-            run_build(zig, target, "single")
+            run_build(target, "single")
         package_precision("single")
 
         double_api_raw = os.environ.get("GODOT_CPP_DOUBLE_API", "").strip()
@@ -168,7 +134,7 @@ def main() -> int:
         shutil.copy2(double_api, api_path)
 
         for target in ("template_debug", "template_release"):
-            run_build(zig, target, "double")
+            run_build(target, "double")
         package_precision("double")
     finally:
         api_path.write_bytes(original_api)
