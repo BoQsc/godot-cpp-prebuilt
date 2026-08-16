@@ -1,0 +1,156 @@
+name: Validate existing prebuilt run
+
+on:
+  push:
+    branches:
+      - fix/prebuilt-release
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Build workflow run whose artifacts should be validated
+        required: true
+        default: "31957335314"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  SOURCE_RUN_ID: ${{ inputs.source_run_id || '31957335314' }}
+  API_VERSION: "4.7"
+
+jobs:
+  smoke:
+    name: Reuse run ${{ inputs.source_run_id || '31957335314' }} · Linux ${{ matrix.precision }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        precision:
+          - single
+          - double
+
+    steps:
+      - name: Checkout current smoke fixture
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Install SCons
+        run: python -m pip install "scons==4.4.0"
+
+      - name: Download existing Linux package
+        uses: actions/download-artifact@v4
+        with:
+          name: godot-cpp-api-${{ env.API_VERSION }}-linux-x86_64-gcc-${{ matrix.precision }}
+          path: smoke-package
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+
+      - name: Extract package
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="$(find smoke-package -maxdepth 1 -type f -name '*.zip' | head -n 1)"
+          test -n "$package"
+          rm -rf smoke-test/godot-cpp smoke-sdk
+          mkdir -p smoke-sdk
+          unzip -q "$package" -d smoke-sdk
+          mv smoke-sdk/godot-cpp smoke-test/godot-cpp
+
+      - name: Build tiny GDExtension against existing package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd smoke-test
+          scons \
+            api_version="$API_VERSION" \
+            platform=linux \
+            arch=x86_64 \
+            target=template_debug \
+            precision="${{ matrix.precision }}" \
+            build_library=no \
+            -j2
+
+          library="$(find project/bin -maxdepth 1 -type f -name 'libsmoke*.so' | head -n 1)"
+          test -n "$library"
+          filename="$(basename "$library")"
+
+          cat > project/smoke.gdextension <<EOF
+          [configuration]
+          entry_symbol = "smoke_library_init"
+          compatibility_minimum = "$API_VERSION"
+          reloadable = false
+
+          [libraries]
+          linux.debug.x86_64 = "res://bin/$filename"
+          EOF
+
+      - name: Download official single-precision Godot
+        if: ${{ matrix.precision == 'single' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/godotengine/godot/releases/download/${API_VERSION}-stable/Godot_v${API_VERSION}-stable_linux.x86_64.zip"
+          curl --fail --location --retry 3 "$url" --output godot-single.zip
+          unzip -q godot-single.zip -d godot-single
+          engine="$(find godot-single -type f -name 'Godot_v*-stable_linux.x86_64' | head -n 1)"
+          test -n "$engine"
+          chmod +x "$engine"
+          echo "SMOKE_GODOT=$PWD/$engine" >> "$GITHUB_ENV"
+
+      - name: Download existing double-precision Godot
+        if: ${{ matrix.precision == 'double' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: godot-editor-${{ env.API_VERSION }}-double-linux-x86_64
+          path: godot-double
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+
+      - name: Select double-precision Godot
+        if: ${{ matrix.precision == 'double' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          engine="$PWD/godot-double/godot-double"
+          test -f "$engine"
+          chmod +x "$engine"
+          echo "SMOKE_GODOT=$engine" >> "$GITHUB_ENV"
+
+      - name: Initialize project cache
+        shell: bash
+        run: |
+          # Godot 4.7 can abort after completing a headless editor/import pass on CI.
+          # Upstream godot-cpp CI explicitly tolerates this initialization crash.
+          set +e
+          timeout 30 "$SMOKE_GODOT" --headless --path smoke-test/project --import
+          status=$?
+          set -e
+          echo "Initialization exit code: $status (non-zero is tolerated here only)"
+
+      - name: Require actual GDExtension runtime load
+        shell: bash
+        run: |
+          set -euo pipefail
+          output_file="$RUNNER_TEMP/godot-smoke-output.txt"
+
+          if ! "$SMOKE_GODOT" --headless --path smoke-test/project --quit-after 2 >"$output_file" 2>&1; then
+            cat "$output_file"
+            echo "Runtime smoke process failed."
+            exit 1
+          fi
+
+          cat "$output_file"
+          if ! grep -Fq "GODOT_CPP_PREBUILT_SMOKE_OK" "$output_file"; then
+            echo "The GDExtension load marker was not observed."
+            exit 1
+          fi
+
+          echo "GDExtension package loaded successfully."
