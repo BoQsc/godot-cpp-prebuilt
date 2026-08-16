@@ -2,9 +2,7 @@
 
 Automated prebuilt `godot-cpp` packages for GDExtension development.
 
-The repository builds the official `godotengine/godot-cpp` source in GitHub Actions,
-packages the generated bindings plus static libraries, and publishes them as GitHub
-Release assets.
+The repository builds the official `godotengine/godot-cpp` source in GitHub Actions, packages the generated bindings plus static libraries, and publishes them as GitHub Release assets.
 
 The normal consumer path is:
 
@@ -22,58 +20,45 @@ Local `godot-cpp` compilation remains available as a recovery option.
 
 ## Default build
 
-The repository currently pins:
-
 ```text
 Godot API:        4.7
 godot-cpp commit: d7b6162249ed52796a8301d216c24ee71d68c2bf
-Zig:              0.16.0-dev.1484+d0ba6642b
 ```
-
-The pinned `godot-cpp` commit is a current 10.x commit that includes Godot 4.7 API support.
 
 See `builds.json`.
 
 ## Published variants
 
-Each package contains both:
+Each package contains both `template_debug` and `template_release` libraries for exactly one precision.
 
-```text
-template_debug
-template_release
-```
-
-Precision is deliberately a separate package because generated bindings are precision-specific:
+Precision is deliberately separate because generated bindings are precision-specific:
 
 ```text
 single
 double
 ```
 
-Default release variants:
+Release variants mirror the upstream `godot-cpp` SCons CI toolchains:
 
 | Asset ID | Toolchain |
 |---|---|
 | `windows-x86_64-msvc` | Windows x86_64 / MSVC |
 | `windows-x86_64-mingw` | Windows x86_64 / MinGW |
-| `windows-x86_64-zig` | Windows x86_64 / pinned Zig |
 | `linux-x86_64-gcc` | Linux x86_64 / GCC |
 | `macos-universal-clang` | macOS universal / Clang |
 | `android-arm64` | Android arm64 |
 | `ios-arm64` | iOS arm64 |
 | `web-wasm32` | Web / Wasm |
 
-## Build a release
+That is 7 platform/toolchain variants × 2 precisions = 14 release packages.
 
-After uploading this repository to GitHub:
+## Build a release
 
 1. Open **Actions**.
 2. Select **Build and release godot-cpp**.
 3. Click **Run workflow**.
 4. Keep the defaults for the first build.
-5. Set **Publish GitHub Release** to `true`.
-
-The workflow resolves the configured upstream ref to an exact commit before compiling.
+5. Set **Publish GitHub Release** to `true` when you want a release.
 
 A default release tag looks like:
 
@@ -81,13 +66,12 @@ A default release tag looks like:
 api-4.7-d7b6162
 ```
 
-Assets look like:
+Example assets:
 
 ```text
 godot-cpp-api-4.7-windows-x86_64-msvc-single.zip
 godot-cpp-api-4.7-windows-x86_64-msvc-double.zip
 godot-cpp-api-4.7-windows-x86_64-mingw-single.zip
-godot-cpp-api-4.7-windows-x86_64-zig-single.zip
 godot-cpp-api-4.7-linux-x86_64-gcc-single.zip
 godot-cpp-api-4.7-macos-universal-clang-single.zip
 godot-cpp-api-4.7-android-arm64-single.zip
@@ -99,8 +83,6 @@ manifest.json
 
 ## Use from another GitHub workflow
 
-This repository is also a composite GitHub Action.
-
 ```yaml
 - name: Download prebuilt godot-cpp
   uses: OWNER/godot-cpp-prebuilt@main
@@ -110,76 +92,45 @@ This repository is also a composite GitHub Action.
     path: godot-cpp
 
 - name: Build my GDExtension
-  run: scons build_library=no api_version=4.7
+  run: scons build_library=no api_version=4.7 precision=single
 ```
 
-On Windows the automatic host variant is MSVC. To use the Zig build:
-
-```yaml
-- uses: OWNER/godot-cpp-prebuilt@main
-  with:
-    api-version: "4.7"
-    variant: windows-x86_64-zig
-    precision: single
-    path: godot-cpp
-```
+On Windows, `variant: auto` selects `windows-x86_64-msvc`.
 
 ## Local download
-
-No third-party Python packages are required:
 
 ```text
 python scripts/install.py --repo OWNER/godot-cpp-prebuilt --api-version 4.7
 ```
 
-Example for the Zig variant:
-
-```text
-python scripts/install.py ^
-  --repo OWNER/godot-cpp-prebuilt ^
-  --api-version 4.7 ^
-  --variant windows-x86_64-zig ^
-  --precision single ^
-  --path godot-cpp
-```
-
 ## Consumer SCons
 
-The downloaded package is a complete trimmed `godot-cpp` source/build tree containing
-the generated bindings and matching prebuilt libraries.
-
-Your normal extension SConstruct can still use the official integration:
+Typical integration:
 
 ```python
 env = SConscript("godot-cpp/SConstruct", {"api_version": "4.7"})
 ```
 
-Build with:
+Then build against the downloaded package without rebuilding `godot-cpp`:
 
 ```text
-scons build_library=no api_version=4.7
+scons build_library=no api_version=4.7 precision=single
 ```
 
-`build_library=no` tells `godot-cpp` to configure the extension build and link the matching
-library from `godot-cpp/bin/` without recompiling `godot-cpp`.
+Use `precision=double` only with the matching `-double.zip` package and a double-precision Godot build.
+
+## Double precision
+
+The release workflow does not fake double precision from the normal API file. It builds a real Godot editor with `precision=double`, dumps its GDExtension API, verifies the API reports double precision, and reuses that API for all double packages.
+
+## Smoke test and release gate
+
+After all 14 packages build, CI downloads the fresh Linux GCC single and double packages, builds a tiny GDExtension using `build_library=no`, and loads it in matching Godot editors. Release publishing depends on those smoke tests succeeding.
 
 ## Local recovery build
 
-Windows + Zig is retained as the known recovery path:
-
-```text
-python local_build.py
-```
-
-It downloads the pinned upstream source and pinned Zig compiler, then builds the same
-debug/release + single/double libraries locally.
-
-This is intentionally not the normal workflow.
+`local_build.py` is a Windows/MSVC recovery helper. It builds the single-precision MSVC package locally. Double precision is attempted only when `GODOT_CPP_DOUBLE_API` points to a genuine API dump from a double-precision Godot editor.
 
 ## Not an official Godot repository
 
-This repository builds and redistributes artifacts from the official MIT-licensed
-`godotengine/godot-cpp` project. It is not maintained or endorsed by the Godot Engine
-project.
-
-See `SETUP.md` before creating the GitHub repository.
+This repository builds and redistributes artifacts from the official MIT-licensed `godotengine/godot-cpp` project. It is not maintained or endorsed by the Godot Engine project.
