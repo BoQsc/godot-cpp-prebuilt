@@ -56,7 +56,6 @@ def main() -> int:
     parser.add_argument("--platform", required=True)
     parser.add_argument("--arch", required=True)
     parser.add_argument("--precision", required=True, choices=("single", "double"))
-    parser.add_argument("--zig-version", default="")
     args = parser.parse_args()
 
     source = Path(args.source).resolve()
@@ -75,7 +74,6 @@ def main() -> int:
             "compiler": args.compiler,
             "platform": args.platform,
             "arch": args.arch,
-            "zig_version": args.zig_version or None,
             "targets": ["template_debug", "template_release"],
             "precision": args.precision,
             "created_unix": int(time.time()),
