@@ -1,0 +1,119 @@
+name: Publish existing validated prebuilt run
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/publish-existing.yml
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Validated build workflow run ID
+        required: true
+        default: "31957335314"
+        type: string
+      api_version:
+        description: Godot API version
+        required: true
+        default: "4.7"
+        type: string
+      godot_cpp_sha:
+        description: Exact upstream godot-cpp commit
+        required: true
+        default: "d7b6162249ed52796a8301d216c24ee71d68c2bf"
+        type: string
+      release_tag:
+        description: GitHub Release tag
+        required: true
+        default: "api-4.7-d7b6162"
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  SOURCE_RUN_ID: ${{ inputs.source_run_id || '31957335314' }}
+  API_VERSION: ${{ inputs.api_version || '4.7' }}
+  GODOT_CPP_SHA: ${{ inputs.godot_cpp_sha || 'd7b6162249ed52796a8301d216c24ee71d68c2bf' }}
+  RELEASE_TAG: ${{ inputs.release_tag || 'api-4.7-d7b6162' }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download package artifacts from validated run
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: godot-cpp-api-${{ env.API_VERSION }}-*
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+
+      - name: Verify complete package set
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected=(
+            linux-x86_64-gcc
+            windows-x86_64-msvc
+            windows-x86_64-mingw
+            macos-universal-clang
+            android-arm64
+            ios-arm64
+            web-wasm32
+          )
+
+          count=0
+          for variant in "${expected[@]}"; do
+            for precision in single double; do
+              file="dist/godot-cpp-api-${API_VERSION}-${variant}-${precision}.zip"
+              if [ ! -f "$file" ]; then
+                echo "Missing validated package: $file"
+                exit 1
+              fi
+              count=$((count + 1))
+            done
+          done
+
+          actual="$(find dist -maxdepth 1 -type f -name 'godot-cpp-api-*.zip' | wc -l | tr -d ' ')"
+          if [ "$actual" != "$count" ]; then
+            echo "Expected exactly $count package ZIPs, found $actual"
+            find dist -maxdepth 1 -type f -print | sort
+            exit 1
+          fi
+
+          echo "Verified $count validated package ZIPs."
+
+      - name: Generate release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/make_manifest.py dist \
+            --api-version "$API_VERSION" \
+            --godot-cpp-sha "$GODOT_CPP_SHA" \
+            --output dist/manifest.json
+
+      - name: Create release and upload validated artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --title "godot-cpp API ${API_VERSION} · ${GODOT_CPP_SHA:0:7}" \
+              --notes "Prebuilt godot-cpp packages from validated Actions run ${SOURCE_RUN_ID}. Includes the upstream-supported SCons platform/toolchain matrix in single and double precision. Double-precision bindings use an API dumped from a real precision=double Godot build. Linux single and double packages passed the GDExtension build/load smoke validation."
+          fi
+
+          gh release upload "$RELEASE_TAG" dist/*.zip dist/manifest.json --clobber
+          gh release view "$RELEASE_TAG"
