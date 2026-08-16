@@ -449,12 +449,36 @@ jobs:
           chmod +x "$engine"
           echo "SMOKE_GODOT=$engine" >> "$GITHUB_ENV"
 
-      - name: Load smoke GDExtension in Godot
+      - name: Initialize project cache
+        shell: bash
+        run: |
+          # Godot 4.7 may abort after completing a headless import/editor pass in CI.
+          # Upstream godot-cpp CI deliberately tolerates this initialization crash.
+          set +e
+          timeout 30 "$SMOKE_GODOT" --headless --path smoke-test/project --import
+          status=$?
+          set -e
+          echo "Initialization exit code: $status (non-zero is tolerated here only)"
+
+      - name: Require actual GDExtension runtime load
         shell: bash
         run: |
           set -euo pipefail
-          "$SMOKE_GODOT" --headless --path smoke-test/project --editor --quit
-          "$SMOKE_GODOT" --headless --path smoke-test/project --quit-after 2
+          output_file="$RUNNER_TEMP/godot-smoke-output.txt"
+
+          if ! "$SMOKE_GODOT" --headless --path smoke-test/project --quit-after 2 >"$output_file" 2>&1; then
+            cat "$output_file"
+            echo "Runtime smoke process failed."
+            exit 1
+          fi
+
+          cat "$output_file"
+          if ! grep -Fq "GODOT_CPP_PREBUILT_SMOKE_OK" "$output_file"; then
+            echo "The GDExtension load marker was not observed."
+            exit 1
+          fi
+
+          echo "GDExtension package loaded successfully."
 
   release:
     if: ${{ inputs.publish_release }}
