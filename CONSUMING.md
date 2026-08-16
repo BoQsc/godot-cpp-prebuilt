@@ -2,17 +2,7 @@
 
 ## Why the package contains more than a `.lib` or `.a`
 
-A useful `godot-cpp` SDK needs:
-
-```text
-headers
-generated bindings
-GDExtension interface/API files
-matching static libraries
-build configuration files
-```
-
-The release package therefore contains a trimmed but usable `godot-cpp` tree.
+A useful `godot-cpp` SDK needs headers, generated bindings, GDExtension interface/API files, matching static libraries, and build configuration files. The release package therefore contains a trimmed but usable `godot-cpp` tree.
 
 ## SCons
 
@@ -34,17 +24,10 @@ Default(library)
 Then build using the prebuilt library:
 
 ```text
-scons build_library=no api_version=4.7
+scons build_library=no api_version=4.7 precision=single
 ```
 
-The important option is:
-
-```text
-build_library=no
-```
-
-The upstream SConstruct still configures the correct platform/compiler flags and adds the
-matching static library from `godot-cpp/bin`, but does not rebuild `godot-cpp`.
+The important option is `build_library=no`: upstream SCons still configures the platform/compiler flags and links the matching static library from `godot-cpp/bin`, but does not rebuild `godot-cpp`.
 
 ## Precision
 
@@ -60,35 +43,19 @@ Double precision:
 scons build_library=no api_version=4.7 precision=double
 ```
 
-Use the `-single.zip` package for a normal Godot build and the `-double.zip` package for
-a double-precision Godot build.
+Use the `-single.zip` package for a normal Godot build and the `-double.zip` package for a double-precision Godot build.
 
 ## Debug / release
 
-Editor and debug templates:
-
-```text
-target=template_debug
-```
-
-Release templates:
-
-```text
-target=template_release
-```
-
-Both libraries are included.
+Editor and debug templates use `target=template_debug`. Release templates use `target=template_release`. Both libraries are included.
 
 ## Toolchain matching
 
 Use a package built for the same toolchain family as your extension.
 
-Examples:
-
 ```text
 MSVC extension  → windows-x86_64-msvc
 MinGW extension → windows-x86_64-mingw
-Zig setup       → windows-x86_64-zig
 ```
 
 Do not assume arbitrary C++ ABIs are interchangeable.
