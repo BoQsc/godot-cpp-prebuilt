@@ -1,6 +1,7 @@
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/godot.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 
 using namespace godot;
 
@@ -14,6 +15,7 @@ protected:
 static void initialize_smoke(ModuleInitializationLevel level) {
     if (level == MODULE_INITIALIZATION_LEVEL_SCENE) {
         ClassDB::register_class<SmokeNode>();
+        UtilityFunctions::print("GODOT_CPP_PREBUILT_SMOKE_OK");
     }
 }
 
