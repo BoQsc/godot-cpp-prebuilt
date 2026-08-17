@@ -37,6 +37,11 @@ jobs:
     name: Build windows-x86_64-zig-single
     runs-on: ubuntu-22.04
     timeout-minutes: 90
+    env:
+      HOME: ${{ github.workspace }}
+      XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+      ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/.zig-local-cache
 
     outputs:
       sha: ${{ steps.upstream.outputs.sha }}
@@ -107,6 +112,16 @@ jobs:
           tar -xf "$archive"
           echo "$PWD/zig-x86_64-linux-${version}" >> "$GITHUB_PATH"
 
+      - name: Prepare Zig cache directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$XDG_CACHE_HOME" "$ZIG_GLOBAL_CACHE_DIR" "$ZIG_LOCAL_CACHE_DIR"
+          echo "HOME=$HOME"
+          echo "XDG_CACHE_HOME=$XDG_CACHE_HOME"
+          echo "ZIG_GLOBAL_CACHE_DIR=$ZIG_GLOBAL_CACHE_DIR"
+          echo "ZIG_LOCAL_CACHE_DIR=$ZIG_LOCAL_CACHE_DIR"
+
       - name: Verify Zig
         shell: bash
         run: |
@@ -139,6 +154,16 @@ jobs:
               env["use_mingw"] = True
               env["use_llvm"] = True
               env["is_msvc"] = False
+
+              subprocess_env = dict(env.get("ENV", {}))
+              subprocess_env.update({
+                  "PATH": os.environ.get("PATH", ""),
+                  "HOME": os.environ.get("HOME", os.getcwd()),
+                  "XDG_CACHE_HOME": os.environ.get("XDG_CACHE_HOME", os.path.join(os.getcwd(), ".cache")),
+                  "ZIG_GLOBAL_CACHE_DIR": os.environ.get("ZIG_GLOBAL_CACHE_DIR", os.path.join(os.getcwd(), ".zig-global-cache")),
+                  "ZIG_LOCAL_CACHE_DIR": os.environ.get("ZIG_LOCAL_CACHE_DIR", os.path.join(os.getcwd(), ".zig-local-cache")),
+              })
+              env["ENV"] = subprocess_env
 
               env["CC"] = "zig cc -target x86_64-windows-gnu"
               env["CXX"] = "zig c++ -target x86_64-windows-gnu"
