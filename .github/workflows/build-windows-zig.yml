@@ -257,6 +257,7 @@ jobs:
 
           zig c++ \
             -target x86_64-windows-gnu \
+            -fno-sanitize=undefined \
             -std=c++17 \
             -fno-exceptions \
             -fvisibility=hidden \
