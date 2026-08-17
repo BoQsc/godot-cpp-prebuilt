@@ -1,0 +1,279 @@
+name: Build Windows Zig godot-cpp
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_version:
+        description: Godot API version
+        required: true
+        default: "4.7"
+        type: string
+      godot_cpp_ref:
+        description: Upstream godot-cpp branch, tag, or commit
+        required: true
+        default: "d7b6162249ed52796a8301d216c24ee71d68c2bf"
+        type: string
+      zig_version:
+        description: Zig version
+        required: true
+        default: "0.16.0"
+        type: string
+      publish_release:
+        description: Upload the ZIP to an existing GitHub Release
+        required: true
+        default: false
+        type: boolean
+      release_tag:
+        description: Existing release tag to upload into; defaults to api-<api_version>-<godot-cpp-short-sha>
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build windows-x86_64-zig-single
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    outputs:
+      sha: ${{ steps.upstream.outputs.sha }}
+      short_sha: ${{ steps.upstream.outputs.short_sha }}
+      package_name: ${{ steps.package.outputs.package_name }}
+      release_tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned upstream godot-cpp
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot-cpp
+          ref: ${{ inputs.godot_cpp_ref }}
+          path: godot-cpp
+
+      - name: Resolve upstream revision
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git -C godot-cpp rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${sha:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify bundled single-precision API
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="${{ inputs.api_version }}"
+          api="${api/./-}"
+          file="godot-cpp/gdextension/extension_api-${api}.json"
+
+          if [ ! -f "$file" ]; then
+            echo "Requested Godot API file was not found: $file"
+            exit 1
+          fi
+
+          python - "$file" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          precision = data.get("header", {}).get("precision")
+          if precision != "single":
+              raise SystemExit(f"Expected bundled API to be single precision, got: {precision!r}")
+          print("Bundled API precision:", precision)
+          PY
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Install SCons
+        shell: bash
+        run: python -m pip install "scons==4.4.0"
+
+      - name: Install Zig
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ inputs.zig_version }}"
+          archive="zig-x86_64-linux-${version}.tar.xz"
+          url="https://ziglang.org/download/${version}/${archive}"
+
+          curl --fail --location --retry 3 "$url" --output "$archive"
+          tar -xf "$archive"
+          echo "$PWD/zig-x86_64-linux-${version}" >> "$GITHUB_PATH"
+
+      - name: Verify Zig
+        shell: bash
+        run: |
+          set -euo pipefail
+          zig version
+          zig c++ -target x86_64-windows-gnu --version
+
+      - name: Create Zig platform tool for godot-cpp SCons
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p zig-tools
+          cat > zig-tools/windows.py <<'PY'
+          import os
+          import sys
+
+          sys.path.append(os.path.join(os.getcwd(), "tools"))
+          import common_compiler_flags
+
+
+          def options(opts):
+              pass
+
+
+          def exists(env):
+              return True
+
+
+          def generate(env):
+              env["use_mingw"] = True
+              env["use_llvm"] = True
+              env["is_msvc"] = False
+
+              env["CC"] = "zig cc -target x86_64-windows-gnu"
+              env["CXX"] = "zig c++ -target x86_64-windows-gnu"
+              env["LINK"] = "zig c++ -target x86_64-windows-gnu"
+              env["AR"] = "zig ar"
+              env["RANLIB"] = "true"
+
+              env["LIBPREFIX"] = "lib"
+              env["LIBSUFFIX"] = ".a"
+              env["SHLIBSUFFIX"] = ".dll"
+
+              env.Append(CPPDEFINES=["WINDOWS_ENABLED"])
+              env.Append(CCFLAGS=["-Wwrite-strings"])
+
+              # Keep this prebuilt focused on ABI compatibility. LTO is not needed
+              # for a distributable static SDK package and can vary across Zig versions.
+              if env["lto"] == "auto":
+                  env["lto"] = "none"
+
+              common_compiler_flags.generate(env)
+          PY
+
+      - name: Restore SCons cache
+        uses: actions/cache@v4
+        with:
+          path: .scons_cache
+          key: godot-cpp-windows-x86_64-zig-single-${{ inputs.zig_version }}-${{ steps.upstream.outputs.sha }}-api${{ inputs.api_version }}
+
+      - name: Build godot-cpp with Zig
+        shell: bash
+        env:
+          SCONS_CACHE: ${{ github.workspace }}/.scons_cache
+        run: |
+          set -euo pipefail
+          cd godot-cpp
+          for target in template_debug template_release; do
+            scons \
+              api_version="${{ inputs.api_version }}" \
+              platform=windows \
+              arch=x86_64 \
+              target="$target" \
+              precision=single \
+              custom_tools="../zig-tools" \
+              -j2
+          done
+
+          ls -lah bin
+          test -f bin/libgodot-cpp.windows.template_debug.x86_64.a
+          test -f bin/libgodot-cpp.windows.template_release.x86_64.a
+
+      - name: Package Zig prebuilt SDK
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          package="godot-cpp-api-${{ inputs.api_version }}-windows-x86_64-zig-single.zip"
+          python scripts/package.py \
+            --source godot-cpp \
+            --output "dist/$package" \
+            --api-version "${{ inputs.api_version }}" \
+            --godot-cpp-sha "${{ steps.upstream.outputs.sha }}" \
+            --variant "windows-x86_64-zig" \
+            --compiler "zig-${{ inputs.zig_version }}" \
+            --platform "windows" \
+            --arch "x86_64" \
+            --precision "single"
+          echo "package_name=$package" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke link a tiny Windows GDExtension with Zig
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p smoke-zig
+          cat > smoke-zig/smoke.cpp <<'CPP'
+          #include <godot_cpp/godot.hpp>
+
+          using namespace godot;
+
+          extern "C" GDExtensionBool GDE_EXPORT smoke_library_init(
+              GDExtensionInterfaceGetProcAddress p_get_proc_address,
+              GDExtensionClassLibraryPtr p_library,
+              GDExtensionInitialization *r_initialization
+          ) {
+              GDExtensionBinding::InitObject init_obj(p_get_proc_address, p_library, r_initialization);
+              init_obj.set_minimum_library_initialization_level(MODULE_INITIALIZATION_LEVEL_SCENE);
+              return init_obj.init();
+          }
+          CPP
+
+          zig c++ \
+            -target x86_64-windows-gnu \
+            -std=c++17 \
+            -fno-exceptions \
+            -fvisibility=hidden \
+            -DGDEXTENSION \
+            -DWINDOWS_ENABLED \
+            -DTHREADS_ENABLED \
+            -DDEBUG_ENABLED \
+            -I godot-cpp/include \
+            -I godot-cpp/gen/include \
+            -I godot-cpp/gdextension \
+            -shared \
+            -o smoke-zig/smoke.windows.template_debug.x86_64.dll \
+            smoke-zig/smoke.cpp \
+            godot-cpp/bin/libgodot-cpp.windows.template_debug.x86_64.a \
+            -Wl,--no-undefined
+
+          test -s smoke-zig/smoke.windows.template_debug.x86_64.dll
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-cpp-api-${{ inputs.api_version }}-windows-x86_64-zig-single
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Choose release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.release_tag }}" ]; then
+            tag="${{ inputs.release_tag }}"
+          else
+            tag="api-${{ inputs.api_version }}-${{ steps.upstream.outputs.short_sha }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to existing GitHub Release
+        if: ${{ inputs.publish_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null
+          gh release upload "$TAG" dist/*.zip --clobber
