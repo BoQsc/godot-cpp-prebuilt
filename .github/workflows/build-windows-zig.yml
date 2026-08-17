@@ -19,12 +19,12 @@ on:
         default: "0.16.0"
         type: string
       publish_release:
-        description: Upload the ZIP to an existing GitHub Release
+        description: Create/update a separate Zig GitHub Release
         required: true
-        default: false
+        default: true
         type: boolean
       release_tag:
-        description: Existing release tag to upload into; defaults to api-<api_version>-<godot-cpp-short-sha>
+        description: Optional Zig release tag override; defaults to api-<api_version>-<godot-cpp-short-sha>-zig
         required: false
         default: ""
         type: string
@@ -290,11 +290,11 @@ jobs:
           if [ -n "${{ inputs.release_tag }}" ]; then
             tag="${{ inputs.release_tag }}"
           else
-            tag="api-${{ inputs.api_version }}-${{ steps.upstream.outputs.short_sha }}"
+            tag="api-${{ inputs.api_version }}-${{ steps.upstream.outputs.short_sha }}-zig"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Upload to existing GitHub Release
+      - name: Create/update separate Zig GitHub Release
         if: ${{ inputs.publish_release }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -302,5 +302,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release view "$TAG" >/dev/null
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "godot-cpp API ${{ inputs.api_version }} Zig ${{ inputs.zig_version }}" \
+              --notes "Windows x86_64 single-precision godot-cpp prebuilt with Zig ${{ inputs.zig_version }} from upstream ${{ steps.upstream.outputs.sha }}."
+          fi
           gh release upload "$TAG" dist/*.zip --clobber
